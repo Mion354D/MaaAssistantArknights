@@ -42,10 +42,10 @@ The fork workflow `.github/workflows/fork-sync-build-release.yml` runs weekly an
 4. Build Windows x64 with the upstream CMake and WPF publish steps.
 5. Publish a fork release with a stable date tag such as `v2026.6.27042`.
 6. Generate OTA packages from recent fork releases.
-7. Generate seed OTA packages from recent upstream releases.
+7. Generate seed OTA packages from recent upstream releases in both the main upstream repository and `MaaRelease`.
 8. Optionally generate one required OTA from a manually supplied `from_version`.
 
-The upstream seed OTA step is what makes the first fork release usable without a previous fork release. The manual `from_version` input is still available for the one-user case where the installed version is older than the automatic upstream/fork OTA history. If `from_version` is from a specific repository, set `source_package_repo` to the repository containing that full package.
+The upstream seed OTA step is what makes the first fork release usable without a previous fork release. The workflow derives the installed-version part of the OTA filename from the downloaded full package name, not only from the release tag. The manual `from_version` input is still available for the one-user case where the installed version is older than the automatic upstream/fork OTA history. If `from_version` is from a specific repository, set `source_package_repo` to the repository containing that full package.
 
 ## Quiet UI Policy
 

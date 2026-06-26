@@ -295,8 +295,8 @@ jobs:
             local old_tag="$1"
             local required="$2"
             shift 2
-            local source_dir="ota-work/$old_tag"
-            local source_zip="$source_dir/MAA-$old_tag-win-x64.zip"
+            local safe_old_tag="${old_tag//\//_}"
+            local source_dir="ota-work/$safe_old_tag"
 
             if [ "$old_tag" = "$TAG" ]; then
               return 0
@@ -307,20 +307,25 @@ jobs:
               return 0
             fi
 
+            source_zip="$(find "$source_dir" -maxdepth 1 -type f -name 'MAA-*-win-x64.zip' | head -n 1)"
             if [ ! -f "$source_zip" ]; then
               if [ "$required" = "true" ]; then
-                echo "::error::Downloaded release did not contain $source_zip."
+                echo "::error::Downloaded release did not contain a MAA-*-win-x64.zip source package."
                 exit 1
               fi
 
-              echo "::warning::Downloaded release did not contain $source_zip; skipping OTA."
+              echo "::warning::Downloaded release did not contain a MAA-*-win-x64.zip source package; skipping OTA."
               return 0
             fi
+
+            source_file="$(basename "$source_zip")"
+            source_version="${source_file#MAA-}"
+            source_version="${source_version%-win-x64.zip}"
 
             bash tools/OTAPacker/zipota.sh \
               "$source_zip" \
               "$target_zip" \
-              "release-assets/MAAComponent-OTA-${old_tag}_${TAG}-win-x64.zip"
+              "release-assets/MAAComponent-OTA-${source_version}_${TAG}-win-x64.zip"
           }
 
           if [ -n "$FROM_VERSION" ]; then
@@ -355,6 +360,11 @@ jobs:
             gh release list --repo "MaaAssistantArknights/MaaAssistantArknights" --limit "$upstream_limit" | awk '{ print $1 }' | while read -r old_tag; do
               [ -n "$old_tag" ] || continue
               build_ota_from "$old_tag" false "MaaAssistantArknights/MaaAssistantArknights" "MaaAssistantArknights/MaaRelease"
+            done
+
+            gh release list --repo "MaaAssistantArknights/MaaRelease" --limit "$upstream_limit" | awk '{ print $1 }' | while read -r old_tag; do
+              [ -n "$old_tag" ] || continue
+              build_ota_from "$old_tag" false "MaaAssistantArknights/MaaRelease"
             done
           fi
 
