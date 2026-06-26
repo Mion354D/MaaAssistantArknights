@@ -25,6 +25,10 @@ public static class MaaUrls
 
     public const string GitHub = "https://github.com/MaaAssistantArknights/MaaAssistantArknights";
 
+    public const string ForkGitHub = "https://github.com/Mion354D/MaaAssistantArknights";
+
+    public const string ForkGitHubApiReleases = "https://api.github.com/repos/Mion354D/MaaAssistantArknights/releases";
+
     public const string ResourceRepository = "https://github.com/MaaAssistantArknights/MaaResource";
 
     public const string GitHubIssues = "https://github.com/MaaAssistantArknights/MaaAssistantArknights/issues";
@@ -83,6 +87,7 @@ public static class MaaUrls
 
     // 资源更新更新源
     public const string GithubResourceUpdate = "https://github.com/MaaAssistantArknights/MaaResource/archive/refs/heads/main.zip";
+    public const string GithubResourceVersion = "https://raw.githubusercontent.com/MaaAssistantArknights/MaaResource/main/resource/version.json";
 
     // MirrorChyan
     public const string MirrorChyanDomain = "https://mirrorchyan.com";

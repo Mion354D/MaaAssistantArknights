@@ -340,7 +340,7 @@ static bool EnsureProgressWindowClassRegistered()
 
 static bool ShouldShowProgressUi()
 {
-    return !g_writeConsoleLog && GetConsoleWindow() == nullptr;
+    return false;
 }
 
 static void PumpProgressUiMessages()
@@ -575,6 +575,11 @@ static void CompleteProgressUi(const std::wstring& status, const std::wstring& d
 static void ShowProgressUiFailure(const std::wstring& failureReason)
 {
     if (!g_progressUi.enabled) {
+        MessageBoxW(
+            nullptr,
+            failureReason.c_str(),
+            L"MAA 更新失败 | MAA Update Failed",
+            MB_OK | MB_ICONERROR);
         return;
     }
 

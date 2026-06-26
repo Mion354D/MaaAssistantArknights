@@ -38,8 +38,6 @@ public static class ResourceUpdater
 
     public static async Task<bool> UpdateFromGithubAsync()
     {
-        ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceUpdating"));
-
         if (!await DownloadFullPackageAsync(MaaUrls.GithubResourceUpdate, "MaaResourceGithub.zip", true).ConfigureAwait(false))
         {
             Fail();
@@ -107,9 +105,54 @@ public static class ResourceUpdater
         static void Fail()
         {
             string msg = LocalizationHelper.GetString("GameResourceFailed");
-            ToastNotification.ShowDirect(msg);
             OutputDownloadProgress(downloading: false, output: msg);
         }
+    }
+
+    public static async Task<CheckUpdateRetT> CheckFromGithubAsync()
+    {
+        var currentVersionDateTime = VersionUpdateSettingsUserControlModel
+            .GetResourceVersionByClientType(SettingsViewModel.GameSettings.ClientType)
+            .DateTime;
+
+        string? jsonStr = await Instances.HttpService.GetStringAsync(new(MaaUrls.GithubResourceVersion));
+        if (string.IsNullOrWhiteSpace(jsonStr))
+        {
+            _logger.Error("Failed to fetch MaaResource version from GitHub.");
+            return CheckUpdateRetT.NetworkError;
+        }
+
+        JObject? data;
+        try
+        {
+            data = (JObject?)JsonConvert.DeserializeObject(jsonStr);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to deserialize MaaResource version.json from GitHub.");
+            return CheckUpdateRetT.UnknownError;
+        }
+
+        if (!DateTimeOffset.TryParseExact(
+                data?["last_updated"]?.ToString(),
+                "yyyy-MM-dd HH:mm:ss.fff",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                out var versionTime))
+        {
+            _logger.Error("GitHub MaaResource version.json does not contain a valid last_updated field.");
+            return CheckUpdateRetT.UnknownError;
+        }
+
+        if (currentVersionDateTime >= versionTime)
+        {
+            return CheckUpdateRetT.AlreadyLatest;
+        }
+
+        SettingsViewModel.VersionUpdateSettings.NewResourceFoundInfo =
+            LocalizationHelper.GetStringFormat("MirrorChyanResourceUpdateShortTip", versionTime.ToLocalTimeString());
+        _logger.Information("New GitHub MaaResource version found: {DateTime:yyyy-MM-dd HH:mm:ss.fff}", versionTime);
+        return CheckUpdateRetT.OK;
     }
 
     /// <summary>
@@ -151,7 +194,7 @@ public static class ResourceUpdater
         if (response is null)
         {
             _logger.Error("mirrorc failed");
-            ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceFailed"));
+            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("GameResourceFailed"), UiLogColor.Error);
             SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkFetchFailed = true;
             return (CheckUpdateRetT.NetworkError, null, null);
         }
@@ -170,7 +213,7 @@ public static class ResourceUpdater
 
         if (data is null)
         {
-            ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceFailed"));
+            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("GameResourceFailed"), UiLogColor.Error);
             SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkFetchFailed = true;
             return (CheckUpdateRetT.UnknownError, null, null);
         }
@@ -193,7 +236,7 @@ public static class ResourceUpdater
             switch (errorCode)
             {
                 case MirrorChyanErrorCode.KeyExpired:
-                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkExpired"));
+                    Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkExpired"), UiLogColor.Warning);
 
                     SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkFetchFailed = false;
 
@@ -211,17 +254,17 @@ public static class ResourceUpdater
 
                     break;
                 case MirrorChyanErrorCode.KeyInvalid:
-                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkInvalid"));
+                    Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkInvalid"), UiLogColor.Warning);
                     AchievementTrackerHelper.Instance.Unlock(AchievementIds.MirrorChyanCdkError);
                     break;
                 case MirrorChyanErrorCode.ResourceQuotaExhausted:
-                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkQuotaExhausted"));
+                    Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkQuotaExhausted"), UiLogColor.Warning);
                     break;
                 case MirrorChyanErrorCode.KeyMismatched:
-                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkMismatched"));
+                    Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkMismatched"), UiLogColor.Warning);
                     break;
                 case MirrorChyanErrorCode.KeyBlocked:
-                    ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkBlocked"));
+                    Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkBlocked"), UiLogColor.Warning);
                     break;
                 case MirrorChyanErrorCode.InvalidParams:
                 case MirrorChyanErrorCode.ResourceNotFound:
@@ -229,7 +272,7 @@ public static class ResourceUpdater
                 case MirrorChyanErrorCode.InvalidArch:
                 case MirrorChyanErrorCode.InvalidChannel:
                 case MirrorChyanErrorCode.Undivided:
-                    ToastNotification.ShowDirect(data["msg"]?.ToString() ?? LocalizationHelper.GetString("GameResourceFailed"));
+                    Instances.TaskQueueViewModel.AddLog(data["msg"]?.ToString() ?? LocalizationHelper.GetString("GameResourceFailed"), UiLogColor.Error);
                     break;
             }
 
@@ -243,7 +286,7 @@ public static class ResourceUpdater
                 System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
                 out var versionTime))
         {
-            ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceFailed"));
+            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("GameResourceFailed"), UiLogColor.Error);
             return (CheckUpdateRetT.UnknownError, null, null);
         }
 
@@ -271,7 +314,7 @@ public static class ResourceUpdater
             return (CheckUpdateRetT.OK, uri, releaseNote);
         }
 
-        ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceFailed"));
+        Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("GameResourceFailed"), UiLogColor.Error);
         return (CheckUpdateRetT.UnknownError, null, null);
     }
 
@@ -281,9 +324,6 @@ public static class ResourceUpdater
         {
             return false;
         }
-
-        ToastNotification.ShowDirect(LocalizationHelper.GetStringFormat(
-            "GameResourceUpdatingMirrorChyan", releaseNote));
 
         const string MirrorchyanZipFile = "MaaResourceMirrorchyan.zip";
         const string ExtractFolder = "MaaResourceMirrorchyan";
@@ -346,7 +386,6 @@ public static class ResourceUpdater
         static void Fail()
         {
             string msg = LocalizationHelper.GetString("GameResourceFailed");
-            ToastNotification.ShowDirect(msg);
             OutputDownloadProgress(downloading: false, output: msg);
         }
     }
@@ -357,7 +396,7 @@ public static class ResourceUpdater
     /// <returns>返回一个 <see cref="CheckUpdateRetT"/> 枚举值，指示更新检查和下载的结果。
     /// <list type="bullet">
     /// <item><description><see cref="CheckUpdateRetT.AlreadyLatest"/>：已是最新版本。</description></item>
-    /// <item><description><see cref="CheckUpdateRetT.OK"/>：有新版本。（海外源不会自动下载）</description></item>
+    /// <item><description><see cref="CheckUpdateRetT.OK"/>：有新版本。</description></item>
     /// <item><description><see cref="CheckUpdateRetT.NoMirrorChyanCdk"/>：有新版本，但未填写 cdk</description></item>
     /// <item><description><see cref="CheckUpdateRetT.OnlyGameResourceUpdated"/>：下载成功。</description></item>
     /// <item><description><see cref="CheckUpdateRetT.NetworkError"/>：网络错误。</description></item>
@@ -369,24 +408,28 @@ public static class ResourceUpdater
         {
             SettingsViewModel.VersionUpdateSettings.IsCheckingForUpdates = true;
 
-            var (ret, uri, releaseNote) = await CheckFromMirrorChyanAsync();
-            if (ret == CheckUpdateRetT.NoMirrorChyanCdk)
+            if (SettingsViewModel.VersionUpdateSettings.UpdateSource == "Github")
             {
-                ToastNotification.ShowDirect(LocalizationHelper.GetStringFormat("MirrorChyanResourceUpdateTip", releaseNote));
+                var githubRet = await CheckFromGithubAsync();
+                if (githubRet != CheckUpdateRetT.OK)
+                {
+                    return githubRet;
+                }
+
+                return await UpdateFromGithubAsync()
+                    ? CheckUpdateRetT.OnlyGameResourceUpdated
+                    : CheckUpdateRetT.UnknownError;
             }
 
+            var (ret, uri, releaseNote) = await CheckFromMirrorChyanAsync();
             if (ret != CheckUpdateRetT.OK)
             {
                 return ret;
             }
 
-            if (SettingsViewModel.VersionUpdateSettings.UpdateSource == "MirrorChyan" &&
-                await DownloadFromMirrorChyanAsync(uri, releaseNote))
-            {
-                return CheckUpdateRetT.OnlyGameResourceUpdated;
-            }
-
-            return ret;
+            return await DownloadFromMirrorChyanAsync(uri, releaseNote)
+                ? CheckUpdateRetT.OnlyGameResourceUpdated
+                : CheckUpdateRetT.UnknownError;
         }
         finally
         {
@@ -413,7 +456,6 @@ public static class ResourceUpdater
         Instances.AsstProxy.LoadResource();
         DataHelper.Reload();
         SettingsViewModel.VersionUpdateSettings.ResourceInfoUpdate();
-        ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceUpdated"));
     }
 
     private static bool _isReloading = false;
@@ -430,7 +472,6 @@ public static class ResourceUpdater
         await Instances.AsstProxy.LoadResourceWhenIdleAsync();
         DataHelper.Reload();
         SettingsViewModel.VersionUpdateSettings.ResourceInfoUpdate();
-        ToastNotification.ShowDirect(LocalizationHelper.GetString("GameResourceUpdated"));
         _isReloading = false;
     }
 

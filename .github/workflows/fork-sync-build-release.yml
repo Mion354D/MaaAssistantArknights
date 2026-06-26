@@ -1,0 +1,344 @@
+name: Fork Sync Build Release
+
+on:
+  schedule:
+    # Sunday 02:30 Asia/Singapore.
+    - cron: "30 18 * * 6"
+  workflow_dispatch:
+    inputs:
+      from_version:
+        description: "Optional installed version to build one direct OTA from, for example v6.12.3 or v2026.6.27001."
+        required: false
+        type: string
+      source_package_repo:
+        description: "Repository containing from_version full package. Blank means this fork."
+        required: false
+        type: string
+      ota_history_limit:
+        description: "Previous fork releases to build direct OTA packages from. Use 0 to disable."
+        required: false
+        default: "8"
+        type: string
+      publish_release:
+        description: "Publish the fork GitHub release."
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  sync-build:
+    name: Sync Upstream and Build Windows x64
+    if: github.repository == 'Mion354D/MaaAssistantArknights'
+    runs-on: windows-2025-vs2026
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      head_sha: ${{ steps.sync.outputs.head_sha }}
+      upstream_sha: ${{ steps.sync.outputs.upstream_sha }}
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          show-progress: false
+
+      - name: Sync from upstream dev-v2
+        id: sync
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_name }}" -ne "dev-v2") {
+              throw "Fork sync workflow must run on dev-v2, got '${{ github.ref_name }}'."
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if (git remote | Select-String -SimpleMatch "upstream") {
+              git remote set-url upstream https://github.com/MaaAssistantArknights/MaaAssistantArknights.git
+          } else {
+              git remote add upstream https://github.com/MaaAssistantArknights/MaaAssistantArknights.git
+          }
+
+          git fetch upstream dev-v2 --tags
+          $before = git rev-parse HEAD
+          $upstreamSha = git rev-parse upstream/dev-v2
+          git merge --no-edit upstream/dev-v2
+          $after = git rev-parse HEAD
+
+          if ($before -ne $after) {
+              git push origin HEAD:dev-v2
+          } else {
+              Write-Host "No upstream changes to push."
+          }
+
+          "head_sha=$after" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "upstream_sha=$upstreamSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Set fork release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $utc = [DateTime]::UtcNow
+          $runPart = [int]($env:GITHUB_RUN_NUMBER) % 1000
+          if ($runPart -eq 0) {
+              $runPart = 1000
+          }
+
+          $patch = ($utc.Day * 1000) + $runPart
+          $tag = "v$($utc.Year).$($utc.Month).$patch"
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Fork release tag: $tag"
+
+      - name: Fetch submodules
+        shell: bash
+        run: bash ./.github/scripts/sync-optional-submodules.sh --init --depth 1 src/MaaUtils 3rdparty/EmulatorExtras
+
+      - name: Cache MaaDeps
+        id: cache-maadeps
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: |
+            ./src/MaaUtils/MaaDeps
+          key: ${{ runner.os }}-x64-maadeps-${{ hashFiles('tools/maadeps-download.py') }}
+
+      - name: Bootstrap MaaDeps
+        if: steps.cache-maadeps.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/maadeps-download.py x64-windows
+
+      - name: Configure, build and install
+        shell: pwsh
+        run: |
+          cmake -B build --preset windows-publish-x64 -DMAA_HASH_VERSION='${{ steps.tag.outputs.tag }}'
+          cmake --build --preset windows-publish-x64 --parallel $env:NUMBER_OF_PROCESSORS
+          cmake --build build --target MAA.Updater --config RelWithDebInfo --parallel $env:NUMBER_OF_PROCESSORS
+          cmake --install build --config RelWithDebInfo
+
+      - name: Download MaaFramework
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: MaaXYZ/MaaFramework
+          tag: v5.9.2
+          fileName: "*win-x86_64*.zip"
+          extract: true
+          out-file-path: MaaFramework-temp
+
+      - name: Copy ControlUnits
+        shell: pwsh
+        run: |
+          Copy-Item MaaFramework-temp/bin/*Win32ControlUnit* install/
+          Copy-Item MaaFramework-temp/bin/*AdbControlUnit* install/
+
+      - name: Generate global.json
+        shell: bash
+        run: echo '{"sdk":{"version":"10.0.203","rollForward":"disable"}}' > global.json
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Cache .nuke/temp, ~/.nuget/packages
+        id: cache-nuget
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: |
+            .nuke/temp
+            ~/.nuget/packages
+          key: ${{ runner.os }}-x64-nuget-${{ hashFiles('**/*.csproj', 'global.json') }}
+
+      - name: Restore dependencies
+        if: steps.cache-nuget.outputs.cache-hit != 'true'
+        run: dotnet restore src/MaaWpfGui/MaaWpfGui.csproj
+
+      - name: Taggify version for csproj
+        shell: pwsh
+        run: |
+          $csprojPath = Resolve-Path -Path "src/MaaWpfGui/MaaWpfGui.csproj"
+          $tag = '${{ steps.tag.outputs.tag }}' -replace '.*?/', ''
+          if ($tag -match '\d+(\.\d+){1,3}') {
+              $match = $Matches[0]
+          } else {
+              $match = "0.0.1"
+          }
+
+          [xml]$csproj = Get-Content -Path $csprojPath
+          $node = $csproj.Project.PropertyGroup | Where-Object { $_.ApplicationVersion -ne $null }
+          $node.InformationalVersion = $tag
+          $node.Version = $match
+          $node.FileVersion = $match
+          $node.AssemblyVersion = $match
+          $csproj.Save($csprojPath)
+
+      - name: Publish WPF GUI
+        run: dotnet publish src/MaaWpfGui/MaaWpfGui.csproj -c Release -p:Platform=x64 -o install
+
+      - name: Organize install files
+        shell: bash
+        run: |
+          rm -rf install/MAAComponent-DebugSymbol-*.zip
+          rm -rf install/*.pdb
+          rm -rf install/msvc-debug
+          rm -rf install/*.h
+          rm -rf install/*.bak
+
+          cp tools/DependencySetup_依赖库安装.bat install
+
+      - name: Zip full package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Push-Location install
+          Compress-Archive -DestinationPath "../release-assets/MAA-${{ steps.tag.outputs.tag }}-win-x64.zip" -Path ./*
+          Pop-Location
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: fork-release-assets
+          path: release-assets/*
+          compression-level: 0
+
+  release:
+    name: Generate OTA and Publish Release
+    if: github.repository == 'Mion354D/MaaAssistantArknights'
+    needs: sync-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v7
+        with:
+          ref: dev-v2
+          fetch-depth: 0
+          show-progress: false
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: fork-release-assets
+          path: release-assets
+
+      - name: Install OTA tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip
+
+      - name: Create release tag
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag "${{ needs.sync-build.outputs.tag }}" "${{ needs.sync-build.outputs.head_sha }}"
+          git push origin "refs/tags/${{ needs.sync-build.outputs.tag }}"
+
+      - name: Generate OTA packages
+        env:
+          TAG: ${{ needs.sync-build.outputs.tag }}
+          FROM_VERSION: ${{ inputs.from_version || '' }}
+          SOURCE_PACKAGE_REPO: ${{ inputs.source_package_repo || '' }}
+          OTA_HISTORY_LIMIT: ${{ inputs.ota_history_limit || '8' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_zip="$PWD/release-assets/MAA-$TAG-win-x64.zip"
+          if [ ! -f "$target_zip" ]; then
+            echo "::error::Built full package is missing: $target_zip"
+            exit 1
+          fi
+
+          mkdir -p "ota-work/$TAG"
+          cp "$target_zip" "ota-work/$TAG/"
+
+          build_ota_from() {
+            local old_tag="$1"
+            local repo="$2"
+            local required="$3"
+            local source_dir="ota-work/$old_tag"
+            local source_zip="$source_dir/MAA-$old_tag-win-x64.zip"
+
+            if [ "$old_tag" = "$TAG" ]; then
+              return 0
+            fi
+
+            mkdir -p "$source_dir"
+            if ! gh release download "$old_tag" --repo "$repo" --pattern "MAA-$old_tag-win-x64.zip" --clobber -D "$source_dir"; then
+              if [ "$required" = "true" ]; then
+                echo "::error::Could not download MAA-$old_tag-win-x64.zip from $repo."
+                exit 1
+              fi
+
+              echo "::warning::Could not download MAA-$old_tag-win-x64.zip from $repo; skipping historical OTA."
+              return 0
+            fi
+
+            if [ ! -f "$source_zip" ]; then
+              if [ "$required" = "true" ]; then
+                echo "::error::Downloaded release from $repo did not contain $source_zip."
+                exit 1
+              fi
+
+              echo "::warning::Downloaded release from $repo did not contain $source_zip; skipping historical OTA."
+              return 0
+            fi
+
+            bash tools/OTAPacker/zipota.sh \
+              "$source_zip" \
+              "$target_zip" \
+              "release-assets/MAAComponent-OTA-${old_tag}_${TAG}-win-x64.zip"
+          }
+
+          if [ -n "$FROM_VERSION" ]; then
+            source_repo="${SOURCE_PACKAGE_REPO:-$GITHUB_REPOSITORY}"
+            build_ota_from "$FROM_VERSION" "$source_repo" true
+          fi
+
+          limit="${OTA_HISTORY_LIMIT:-8}"
+          if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+            echo "::error::ota_history_limit must be a non-negative integer."
+            exit 1
+          fi
+
+          if [ "$limit" -gt 0 ]; then
+            gh release list --repo "$GITHUB_REPOSITORY" --limit "$limit" | awk '{ print $1 }' | while read -r old_tag; do
+              [ -n "$old_tag" ] || continue
+              build_ota_from "$old_tag" "$GITHUB_REPOSITORY" false
+            done
+          fi
+
+      - name: Write release body
+        env:
+          TAG: ${{ needs.sync-build.outputs.tag }}
+          HEAD_SHA: ${{ needs.sync-build.outputs.head_sha }}
+          UPSTREAM_SHA: ${{ needs.sync-build.outputs.upstream_sha }}
+        run: |
+          cat > release-body.md <<EOF
+          Fork build $TAG
+
+          - Synced from MaaAssistantArknights/MaaAssistantArknights dev-v2 at $UPSTREAM_SHA.
+          - Built fork binary from $HEAD_SHA.
+          - App binary updates are served by this fork release.
+          - Game resources remain sourced from MaaAssistantArknights/MaaResource.
+          EOF
+
+      - name: Publish fork release
+        if: ${{ inputs.publish_release != false }}
+        uses: softprops/action-gh-release@v3.0.1
+        with:
+          tag_name: ${{ needs.sync-build.outputs.tag }}
+          name: Fork build ${{ needs.sync-build.outputs.tag }}
+          body_path: release-body.md
+          files: release-assets/*
+          prerelease: false
+          fail_on_unmatched_files: true

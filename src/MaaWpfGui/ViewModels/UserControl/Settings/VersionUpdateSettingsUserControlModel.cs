@@ -527,7 +527,7 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
 
         if (SettingsViewModel.VersionUpdateSettings.UpdateSource == "MirrorChyan" && string.IsNullOrEmpty(SettingsViewModel.VersionUpdateSettings.MirrorChyanCdk))
         {
-            ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanSelectedButNoCdk"));
+            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanSelectedButNoCdk"), UiLogColor.Warning);
             return;
         }
 
@@ -549,7 +549,7 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
 
         if (toastMessage != string.Empty)
         {
-            ToastNotification.ShowDirect(toastMessage);
+            Instances.TaskQueueViewModel.AddLog(toastMessage, UiLogColor.Warning);
         }
 
         if (ret == VersionUpdateDialogViewModel.CheckUpdateRetT.AlreadyLatest)
@@ -557,10 +557,7 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
             AchievementTrackerHelper.Instance.Unlock(AchievementIds.LatestVersionInspector);
         }
 
-        if (ret == VersionUpdateDialogViewModel.CheckUpdateRetT.OK)
-        {
-            _ = Instances.VersionUpdateDialogViewModel.AskToRestart();
-        }
+        // Fork build keeps update application quiet; downloaded packages apply on next launch.
     }
 
     [UsedImplicitly]
@@ -573,13 +570,24 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
 
         if (SettingsViewModel.VersionUpdateSettings.UpdateSource == "MirrorChyan" && string.IsNullOrEmpty(SettingsViewModel.VersionUpdateSettings.MirrorChyanCdk))
         {
-            ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanSelectedButNoCdk"));
+            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanSelectedButNoCdk"), UiLogColor.Warning);
             return;
         }
 
         IsCheckingForUpdates = true;
 
-        var (ret, uri, releaseNote) = await ResourceUpdater.CheckFromMirrorChyanAsync();
+        var ret = VersionUpdateDialogViewModel.CheckUpdateRetT.UnknownError;
+        string? uri = null;
+        string? releaseNote = null;
+        if (UpdateSource == "Github")
+        {
+            ret = await ResourceUpdater.CheckFromGithubAsync();
+        }
+        else
+        {
+            (ret, uri, releaseNote) = await ResourceUpdater.CheckFromMirrorChyanAsync();
+        }
+
         var toastMessage = ret switch {
             VersionUpdateDialogViewModel.CheckUpdateRetT.AlreadyLatest => LocalizationHelper.GetString("AlreadyLatest"),
             VersionUpdateDialogViewModel.CheckUpdateRetT.UnknownError => LocalizationHelper.GetString("NewVersionDetectFailedTitle"),
@@ -589,7 +597,7 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
 
         if (toastMessage != string.Empty)
         {
-            ToastNotification.ShowDirect(toastMessage);
+            Instances.TaskQueueViewModel.AddLog(toastMessage, UiLogColor.Warning);
         }
 
         if (ret == VersionUpdateDialogViewModel.CheckUpdateRetT.AlreadyLatest)
@@ -599,9 +607,9 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
         }
 
         bool success = UpdateSource switch {
-            "Github" => await ResourceUpdater.UpdateFromGithubAsync(),
-            "MirrorChyan" => (ret == VersionUpdateDialogViewModel.CheckUpdateRetT.OK) && await ResourceUpdater.DownloadFromMirrorChyanAsync(uri, releaseNote),
-            _ => await ResourceUpdater.UpdateFromGithubAsync(),
+            "Github" => ret == VersionUpdateDialogViewModel.CheckUpdateRetT.OK && await ResourceUpdater.UpdateFromGithubAsync(),
+            "MirrorChyan" => ret == VersionUpdateDialogViewModel.CheckUpdateRetT.OK && await ResourceUpdater.DownloadFromMirrorChyanAsync(uri, releaseNote),
+            _ => false,
         };
 
         if (success)
