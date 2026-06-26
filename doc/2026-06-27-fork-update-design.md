@@ -42,9 +42,10 @@ The fork workflow `.github/workflows/fork-sync-build-release.yml` runs weekly an
 4. Build Windows x64 with the upstream CMake and WPF publish steps.
 5. Publish a fork release with a stable date tag such as `v2026.6.27042`.
 6. Generate OTA packages from recent fork releases.
-7. Optionally generate one required OTA from a manually supplied `from_version`.
+7. Generate seed OTA packages from recent upstream releases.
+8. Optionally generate one required OTA from a manually supplied `from_version`.
 
-The manual `from_version` input is for the one-user case where the installed version is older than the automatic OTA history. If `from_version` is from upstream rather than this fork, set `source_package_repo` to the repository containing that full package.
+The upstream seed OTA step is what makes the first fork release usable without a previous fork release. The manual `from_version` input is still available for the one-user case where the installed version is older than the automatic upstream/fork OTA history. If `from_version` is from a specific repository, set `source_package_repo` to the repository containing that full package.
 
 ## Quiet UI Policy
 
@@ -67,5 +68,5 @@ Fork-specific behavior is intentionally concentrated in:
 ## Known Risks
 
 - If upstream changes the same updater files, the scheduled merge may conflict and the workflow should fail explicitly.
-- If the installed version is older than the generated OTA history and no manual `from_version` OTA was created, auto binary update will log that no OTA exists and skip the full package.
+- If the installed version is older than the generated fork/upstream OTA history and no manual `from_version` OTA was created, auto binary update will log that no OTA exists and skip the full package.
 - The resource update tracks MaaResource `main`, so a breaking resource format change must still be handled by upstream compatibility.
