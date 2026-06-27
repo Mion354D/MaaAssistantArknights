@@ -48,6 +48,8 @@ The fork workflow `.github/workflows/fork-sync-build-release.yml` runs daily at 
 
 The upstream seed OTA step is what makes the first fork release usable without a previous fork release. The workflow derives the installed-version part of the OTA filename from the downloaded full package name, not only from the release tag. The manual `from_version` input is still available for the one-user case where the installed version is older than the automatic upstream/fork OTA history. If `from_version` is from a specific repository, set `source_package_repo` to the repository containing that full package.
 
+The upstream `Release Pipeline` workflow is guarded so it only runs in `MaaAssistantArknights/MaaAssistantArknights`. This fork uses `Fork Sync Build Release` for builds and releases.
+
 First production validation:
 
 - Manual run `28270903362` completed successfully.
@@ -67,6 +69,7 @@ First production validation:
 Fork-specific behavior is intentionally concentrated in:
 
 - `.github/workflows/fork-sync-build-release.yml`
+- `.github/workflows/ci.yml`
 - `src/MaaWpfGui/Constants/MaaUrls.cs`
 - `src/MaaWpfGui/Helper/ToastNotification.cs`
 - `src/MaaWpfGui/Models/ResourceUpdater.cs`
