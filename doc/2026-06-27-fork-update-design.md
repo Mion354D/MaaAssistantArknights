@@ -6,8 +6,8 @@ This fork keeps a small local patch set:
 
 - The main WPF binary updates from `Mion354D/MaaAssistantArknights` fork releases.
 - Game resources update from the original Maa resource source.
-- Update UI is quiet: no routine update toasts, no post-update changelog window, and no external updater progress window.
-- Failures remain explicit through task logs or a blocking updater failure message.
+- Update UI is quiet: no toast notifications, no post-update changelog window, and no external updater progress window.
+- Failures remain explicit through task logs, normal error return paths, or a blocking updater failure message.
 
 ## Binary Update Flow
 
@@ -57,7 +57,8 @@ First production validation:
 ## Quiet UI Policy
 
 - First launch after update clears the update flag without opening the changelog window.
-- Update-found, download-failed, resource-update, and MirrorChyan update messages are written to the task log instead of toast notifications.
+- `ToastNotification.Show()` is the central no-op gate for toast notifications; update call sites are left close to upstream style instead of replacing each toast with task-log calls.
+- `VersionUpdateDialogViewModel.AskToRestartCore()` is the central no-op gate for post-download restart prompts.
 - `MAA.Updater.exe` never opens the progress window.
 - `MAA.Updater.exe` still shows a blocking failure message if applying an update fails.
 
@@ -67,6 +68,7 @@ Fork-specific behavior is intentionally concentrated in:
 
 - `.github/workflows/fork-sync-build-release.yml`
 - `src/MaaWpfGui/Constants/MaaUrls.cs`
+- `src/MaaWpfGui/Helper/ToastNotification.cs`
 - `src/MaaWpfGui/Models/ResourceUpdater.cs`
 - `src/MaaWpfGui/ViewModels/Dialogs/VersionUpdateDialogViewModel.cs`
 - `src/MaaWpfGui/ViewModels/UserControl/Settings/VersionUpdateSettingsUserControlModel.cs`

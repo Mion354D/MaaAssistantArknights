@@ -346,7 +346,10 @@ public class VersionUpdateDialogViewModel : Screen
         }
 
         var ret = await CheckAndDownloadVersionUpdate();
-        _logger.Information("Version update check completed with result {Result}; restart prompt is suppressed for fork build.", ret);
+        if (ret == CheckUpdateRetT.OK)
+        {
+            _ = AskToRestart();
+        }
 
         var toastMessage = ret switch {
             CheckUpdateRetT.NoNeedToUpdate => string.Empty,
@@ -364,7 +367,7 @@ public class VersionUpdateDialogViewModel : Screen
 
         if (toastMessage != string.Empty)
         {
-            Instances.TaskQueueViewModel.AddLog(toastMessage, UiLogColor.Warning);
+            ToastNotification.ShowDirect(toastMessage);
         }
     }
 
@@ -604,7 +607,12 @@ public class VersionUpdateDialogViewModel : Screen
         else
         {
             OutputDownloadProgress(downloading: false, output: LocalizationHelper.GetString("NewVersionDownloadFailedTitle"));
-            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("NewVersionDownloadFailedDesc"), UiLogColor.Error);
+            {
+                using var toast = new ToastNotification(LocalizationHelper.GetString("NewVersionDownloadFailedTitle"));
+                toast.AppendContentText(LocalizationHelper.GetString("NewVersionDownloadFailedDesc"))
+                    .AddButton(LocalizationHelper.GetString("NewVersionFoundButtonGoWebpage"), ToastNotification.GetActionTagForOpenWeb(UpdateUrl))
+                    .Show();
+            }
 
             return CheckUpdateRetT.NoNeedToUpdate;
         }
@@ -640,27 +648,41 @@ public class VersionUpdateDialogViewModel : Screen
     {
         bool goDownload = otaFound && SettingsViewModel.VersionUpdateSettings.AutoDownloadUpdatePackage;
 
+        using var toast = new ToastNotification((otaFound ? LocalizationHelper.GetString("NewVersionFoundTitle") : LocalizationHelper.GetString("NewVersionFoundButNoPackageTitle")) + " : " + UpdateTag);
         if (goDownload)
         {
             OutputDownloadProgress(LocalizationHelper.GetString("NewVersionDownloadPreparing"), false, globalSource);
-            Instances.TaskQueueViewModel.AddLog(
-                globalSource
-                    ? LocalizationHelper.GetString("NewVersionFoundDescDownloadingWithGlobalSource")
-                    : LocalizationHelper.GetString("NewVersionFoundDescDownloadingWithMirrorChyan"),
-                UiLogColor.Info);
+            toast.AppendContentText(globalSource
+                ? LocalizationHelper.GetString("NewVersionFoundDescDownloadingWithGlobalSource")
+                : LocalizationHelper.GetString("NewVersionFoundDescDownloadingWithMirrorChyan"));
         }
 
         if (!otaFound)
         {
-            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("NewVersionFoundButNoPackageDesc"), UiLogColor.Warning);
+            toast.AppendContentText(LocalizationHelper.GetString("NewVersionFoundButNoPackageDesc"));
         }
 
-        _logger.Information(
-            "Suppressing update toast for {UpdateTag}. OtaFound={OtaFound}, AutoDownload={AutoDownload}, ActionText={ActionText}",
-            UpdateTag,
-            otaFound,
-            goDownload,
-            text);
+        int count = 0;
+        foreach (var line in UpdateInfo.Split('\n'))
+        {
+            if (line.StartsWith('#') || string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            toast.AppendContentText(line);
+            if (++count >= 10)
+            {
+                break;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            toast.AddButton(text, ToastNotification.GetActionTagForOpenWeb(globalSource ? UpdateUrl : MaaUrls.MirrorChyanManualUpdate));
+        }
+
+        toast.ShowUpdateVersion();
     }
 
     private async Task<CheckUpdateRetT> HandleUpdateFromMirrorChyan()
@@ -703,7 +725,11 @@ public class VersionUpdateDialogViewModel : Screen
         else
         {
             OutputDownloadProgress(downloading: false, output: LocalizationHelper.GetString("NewVersionDownloadFailedTitle"));
-            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("NewVersionDownloadFailedDesc"), UiLogColor.Error);
+            {
+                using var toast = new ToastNotification(LocalizationHelper.GetString("NewVersionDownloadFailedTitle"));
+                toast.AppendContentText(LocalizationHelper.GetString("NewVersionDownloadFailedDesc"))
+                     .Show();
+            }
 
             return CheckUpdateRetT.NoNeedToUpdate;
         }
@@ -744,40 +770,10 @@ public class VersionUpdateDialogViewModel : Screen
         return result == MessageBoxResult.Yes;
     }
 
-    private async Task AskToRestartCore(string description, string title)
+    private Task AskToRestartCore(string description, string title)
     {
-        if (SettingsViewModel.VersionUpdateSettings.AutoInstallUpdatePackage)
-        {
-            if (FakeUpdateHelper.HasPendingFakeUpdate)
-            {
-                await _runningState.UntilIdleAsync(1000);
-                _ = FakeUpdateHelper.Updating();
-                return;
-            }
-
-            await Bootstrapper.RestartAfterIdleAsync();
-            return;
-        }
-
-        await _runningState.UntilIdleAsync(10000);
-
-        var result = MessageBoxHelper.Show(
-            description,
-            title,
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Question,
-            ok: LocalizationHelper.GetString("Ok"),
-            cancel: LocalizationHelper.GetString("ManualRestart"));
-        if (result == MessageBoxResult.OK)
-        {
-            if (FakeUpdateHelper.HasPendingFakeUpdate)
-            {
-                _ = FakeUpdateHelper.Updating();
-                return;
-            }
-
-            Bootstrapper.ShutdownAndRestartWithoutArgs();
-        }
+        _logger.Information("Suppressing restart prompt for fork build. Title={Title}, Description={Description}", title, description);
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -936,7 +932,7 @@ public class VersionUpdateDialogViewModel : Screen
         if (logMissingOta && _assetsObject == null && fullPackage != null)
         {
             _logger.Warning("Fork release {Version} has a full package but no OTA package for current version {CurrentVersion}.", _latestVersion, _curVersion);
-            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("NewVersionNoOtaPackage"), UiLogColor.Warning);
+            ToastNotification.ShowDirect(LocalizationHelper.GetString("NewVersionNoOtaPackage"));
         }
 
         return CheckUpdateRetT.OK;
@@ -1038,7 +1034,8 @@ public class VersionUpdateDialogViewModel : Screen
         if (_assetsObject == null && fullPackage != null && SettingsViewModel.VersionUpdateSettings.AutoDownloadUpdatePackage)
         {
             _logger.Warning("No OTA package found, but full package found.");
-            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("NewVersionNoOtaPackage"), UiLogColor.Warning);
+            using var toast = new ToastNotification(LocalizationHelper.GetString("NewVersionNoOtaPackage"));
+            toast.Show(30);
         }
 
         return CheckUpdateRetT.OK;
@@ -1143,7 +1140,7 @@ public class VersionUpdateDialogViewModel : Screen
     }
 
     /// <summary>
-    /// 处理 MirrorChyan 错误码，记录对应的提示。
+    /// 处理 MirrorChyan 错误码，显示对应的 Toast 提示。
     /// </summary>
     /// <returns>成功（无需处理）返回 null，出错返回 CheckUpdateRetT.UnknownError。</returns>
     private static CheckUpdateRetT? HandleMirrorChyanErrorCode(JObject data, long? mirrorChyanCdkExpired)
@@ -1157,7 +1154,7 @@ public class VersionUpdateDialogViewModel : Screen
         switch (errorCode)
         {
             case MirrorChyanErrorCode.KeyExpired:
-                Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkExpired"), UiLogColor.Warning);
+                ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkExpired"));
                 SettingsViewModel.VersionUpdateSettings.MirrorChyanCdkFetchFailed = false;
 
                 // 有人会第一次就填过期的 cdk 吗
@@ -1175,20 +1172,20 @@ public class VersionUpdateDialogViewModel : Screen
                 break;
 
             case MirrorChyanErrorCode.KeyInvalid:
-                Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkInvalid"), UiLogColor.Warning);
+                ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkInvalid"));
                 AchievementTrackerHelper.Instance.Unlock(AchievementIds.MirrorChyanCdkError);
                 break;
 
             case MirrorChyanErrorCode.ResourceQuotaExhausted:
-                Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkQuotaExhausted"), UiLogColor.Warning);
+                ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkQuotaExhausted"));
                 break;
 
             case MirrorChyanErrorCode.KeyMismatched:
-                Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkMismatched"), UiLogColor.Warning);
+                ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkMismatched"));
                 break;
 
             case MirrorChyanErrorCode.KeyBlocked:
-                Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanCdkBlocked"), UiLogColor.Warning);
+                ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanCdkBlocked"));
                 break;
 
             case MirrorChyanErrorCode.InvalidParams:
@@ -1197,7 +1194,7 @@ public class VersionUpdateDialogViewModel : Screen
             case MirrorChyanErrorCode.InvalidArch:
             case MirrorChyanErrorCode.InvalidChannel:
             case MirrorChyanErrorCode.Undivided:
-                Instances.TaskQueueViewModel.AddLog(data["msg"]?.ToString() ?? LocalizationHelper.GetString("GameResourceFailed"), UiLogColor.Error);
+                ToastNotification.ShowDirect(data["msg"]?.ToString() ?? LocalizationHelper.GetString("GameResourceFailed"));
                 break;
         }
 
@@ -1216,6 +1213,7 @@ public class VersionUpdateDialogViewModel : Screen
         }
 
         _logger.Information("MirrorChyan returned full package, OTA may be building. Will retry after 10s.");
+        ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanBuildingOta"));
         Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("NewVersionIsBeingBuilt"), UiLogColor.Info);
 
         await Task.Delay(10000);
@@ -1234,6 +1232,7 @@ public class VersionUpdateDialogViewModel : Screen
         _requiresFullPackageConfirmation = true;
         if (SettingsViewModel.VersionUpdateSettings.AutoDownloadUpdatePackage)
         {
+            ToastNotification.ShowDirect(LocalizationHelper.GetString("NewVersionNoOtaPackage"));
             Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("NewVersionNoOtaPackage"), UiLogColor.Warning);
         }
 

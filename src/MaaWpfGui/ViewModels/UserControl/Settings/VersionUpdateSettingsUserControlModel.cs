@@ -527,7 +527,7 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
 
         if (SettingsViewModel.VersionUpdateSettings.UpdateSource == "MirrorChyan" && string.IsNullOrEmpty(SettingsViewModel.VersionUpdateSettings.MirrorChyanCdk))
         {
-            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanSelectedButNoCdk"), UiLogColor.Warning);
+            ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanSelectedButNoCdk"));
             return;
         }
 
@@ -549,7 +549,7 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
 
         if (toastMessage != string.Empty)
         {
-            Instances.TaskQueueViewModel.AddLog(toastMessage, UiLogColor.Warning);
+            ToastNotification.ShowDirect(toastMessage);
         }
 
         if (ret == VersionUpdateDialogViewModel.CheckUpdateRetT.AlreadyLatest)
@@ -557,7 +557,10 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
             AchievementTrackerHelper.Instance.Unlock(AchievementIds.LatestVersionInspector);
         }
 
-        // Fork build keeps update application quiet; downloaded packages apply on next launch.
+        if (ret == VersionUpdateDialogViewModel.CheckUpdateRetT.OK)
+        {
+            _ = Instances.VersionUpdateDialogViewModel.AskToRestart();
+        }
     }
 
     [UsedImplicitly]
@@ -570,7 +573,7 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
 
         if (SettingsViewModel.VersionUpdateSettings.UpdateSource == "MirrorChyan" && string.IsNullOrEmpty(SettingsViewModel.VersionUpdateSettings.MirrorChyanCdk))
         {
-            Instances.TaskQueueViewModel.AddLog(LocalizationHelper.GetString("MirrorChyanSelectedButNoCdk"), UiLogColor.Warning);
+            ToastNotification.ShowDirect(LocalizationHelper.GetString("MirrorChyanSelectedButNoCdk"));
             return;
         }
 
@@ -597,7 +600,7 @@ public class VersionUpdateSettingsUserControlModel : PropertyChangedBase
 
         if (toastMessage != string.Empty)
         {
-            Instances.TaskQueueViewModel.AddLog(toastMessage, UiLogColor.Warning);
+            ToastNotification.ShowDirect(toastMessage);
         }
 
         if (ret == VersionUpdateDialogViewModel.CheckUpdateRetT.AlreadyLatest)

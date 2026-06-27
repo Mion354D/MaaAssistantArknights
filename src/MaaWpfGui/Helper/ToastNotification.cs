@@ -38,6 +38,8 @@ namespace MaaWpfGui.Helper;
 /// </summary>
 public class ToastNotification : IDisposable
 {
+    private static readonly bool SuppressAllToastsForFork = true;
+
     private static readonly INotificationPoster _notificationPoster;
 
     private static readonly string _openUrlPrefix;
@@ -289,6 +291,15 @@ public class ToastNotification : IDisposable
     public void Show(double lifeTime = 10d, uint row = 1,
         NotificationSounds sound = NotificationSounds.Notification, params NotificationHint[] hints)
     {
+        if (SuppressAllToastsForFork)
+        {
+            _logger.Information(
+                "Suppressing toast notification for fork build. Title={Title}, Body={Body}",
+                _notificationTitle,
+                _contentCollection.ToString().Trim());
+            return;
+        }
+
         Execute.OnUIThread(() => {
             // TODO: 整理过时代码
             if (!ConfigFactory.Root.GUI.UseNotify || !ToastNotificationCheck().IsAvailable)

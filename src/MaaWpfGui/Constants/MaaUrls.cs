@@ -25,9 +25,11 @@ public static class MaaUrls
 
     public const string GitHub = "https://github.com/MaaAssistantArknights/MaaAssistantArknights";
 
-    public const string ForkGitHub = "https://github.com/Mion354D/MaaAssistantArknights";
+    public const string ForkGitHubRepository = "Mion354D/MaaAssistantArknights";
 
-    public const string ForkGitHubApiReleases = "https://api.github.com/repos/Mion354D/MaaAssistantArknights/releases";
+    public const string ForkGitHub = $"https://github.com/{ForkGitHubRepository}";
+
+    public const string ForkGitHubApiReleases = $"https://api.github.com/repos/{ForkGitHubRepository}/releases";
 
     public const string ResourceRepository = "https://github.com/MaaAssistantArknights/MaaResource";
 
