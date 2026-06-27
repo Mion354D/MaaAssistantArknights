@@ -2,8 +2,8 @@ name: Fork Sync Build Release
 
 on:
   schedule:
-    # Sunday 02:30 Asia/Singapore.
-    - cron: "30 18 * * 6"
+    # Daily 02:30 Asia/Singapore.
+    - cron: "30 18 * * *"
   workflow_dispatch:
     inputs:
       from_version:
@@ -49,6 +49,7 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       head_sha: ${{ steps.sync.outputs.head_sha }}
       upstream_sha: ${{ steps.sync.outputs.upstream_sha }}
+      should_build: ${{ steps.sync.outputs.should_build }}
     steps:
       - name: Checkout fork
         uses: actions/checkout@v7
@@ -79,17 +80,27 @@ jobs:
           git merge --no-edit upstream/dev-v2
           $after = git rev-parse HEAD
 
-          if ($before -ne $after) {
+          $hasChanges = $before -ne $after
+          $shouldBuild = $hasChanges -or ("${{ github.event_name }}" -eq "workflow_dispatch")
+
+          if ($hasChanges) {
               git push origin HEAD:dev-v2
           } else {
               Write-Host "No upstream changes to push."
           }
 
+          if (-not $shouldBuild) {
+              Write-Host "Scheduled run found no upstream changes; skipping build and release."
+          }
+
           "head_sha=$after" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "upstream_sha=$upstreamSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "has_changes=$($hasChanges.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "should_build=$($shouldBuild.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Set fork release tag
         id: tag
+        if: steps.sync.outputs.should_build == 'true'
         shell: pwsh
         run: |
           $utc = [DateTime]::UtcNow
@@ -104,11 +115,13 @@ jobs:
           Write-Host "Fork release tag: $tag"
 
       - name: Fetch submodules
+        if: steps.sync.outputs.should_build == 'true'
         shell: bash
         run: bash ./.github/scripts/sync-optional-submodules.sh --init --depth 1 src/MaaUtils 3rdparty/EmulatorExtras
 
       - name: Cache MaaDeps
         id: cache-maadeps
+        if: steps.sync.outputs.should_build == 'true'
         uses: actions/cache@v5
         continue-on-error: true
         with:
@@ -117,12 +130,13 @@ jobs:
           key: ${{ runner.os }}-x64-maadeps-${{ hashFiles('tools/maadeps-download.py') }}
 
       - name: Bootstrap MaaDeps
-        if: steps.cache-maadeps.outputs.cache-hit != 'true'
+        if: steps.sync.outputs.should_build == 'true' && steps.cache-maadeps.outputs.cache-hit != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 tools/maadeps-download.py x64-windows
 
       - name: Configure, build and install
+        if: steps.sync.outputs.should_build == 'true'
         shell: pwsh
         run: |
           cmake -B build --preset windows-publish-x64 -DMAA_HASH_VERSION='${{ steps.tag.outputs.tag }}'
@@ -131,6 +145,7 @@ jobs:
           cmake --install build --config RelWithDebInfo
 
       - name: Download MaaFramework
+        if: steps.sync.outputs.should_build == 'true'
         uses: robinraju/release-downloader@v1
         with:
           repository: MaaXYZ/MaaFramework
@@ -140,22 +155,26 @@ jobs:
           out-file-path: MaaFramework-temp
 
       - name: Copy ControlUnits
+        if: steps.sync.outputs.should_build == 'true'
         shell: pwsh
         run: |
           Copy-Item MaaFramework-temp/bin/*Win32ControlUnit* install/
           Copy-Item MaaFramework-temp/bin/*AdbControlUnit* install/
 
       - name: Generate global.json
+        if: steps.sync.outputs.should_build == 'true'
         shell: bash
         run: echo '{"sdk":{"version":"10.0.203","rollForward":"disable"}}' > global.json
 
       - name: Setup .NET SDK
+        if: steps.sync.outputs.should_build == 'true'
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
 
       - name: Cache .nuke/temp, ~/.nuget/packages
         id: cache-nuget
+        if: steps.sync.outputs.should_build == 'true'
         uses: actions/cache@v5
         continue-on-error: true
         with:
@@ -165,10 +184,11 @@ jobs:
           key: ${{ runner.os }}-x64-nuget-${{ hashFiles('**/*.csproj', 'global.json') }}
 
       - name: Restore dependencies
-        if: steps.cache-nuget.outputs.cache-hit != 'true'
+        if: steps.sync.outputs.should_build == 'true' && steps.cache-nuget.outputs.cache-hit != 'true'
         run: dotnet restore src/MaaWpfGui/MaaWpfGui.csproj
 
       - name: Taggify version for csproj
+        if: steps.sync.outputs.should_build == 'true'
         shell: pwsh
         run: |
           $csprojPath = Resolve-Path -Path "src/MaaWpfGui/MaaWpfGui.csproj"
@@ -188,9 +208,11 @@ jobs:
           $csproj.Save($csprojPath)
 
       - name: Publish WPF GUI
+        if: steps.sync.outputs.should_build == 'true'
         run: dotnet publish src/MaaWpfGui/MaaWpfGui.csproj -c Release -p:Platform=x64 -o install
 
       - name: Organize install files
+        if: steps.sync.outputs.should_build == 'true'
         shell: bash
         run: |
           rm -rf install/MAAComponent-DebugSymbol-*.zip
@@ -202,6 +224,7 @@ jobs:
           cp tools/DependencySetup_依赖库安装.bat install
 
       - name: Zip full package
+        if: steps.sync.outputs.should_build == 'true'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release-assets | Out-Null
@@ -210,6 +233,7 @@ jobs:
           Pop-Location
 
       - name: Upload package artifact
+        if: steps.sync.outputs.should_build == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: fork-release-assets
@@ -218,7 +242,7 @@ jobs:
 
   release:
     name: Generate OTA and Publish Release
-    if: github.repository == 'Mion354D/MaaAssistantArknights'
+    if: github.repository == 'Mion354D/MaaAssistantArknights' && needs.sync-build.outputs.should_build == 'true'
     needs: sync-build
     runs-on: ubuntu-latest
     steps:
